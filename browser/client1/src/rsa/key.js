@@ -1,29 +1,16 @@
 import {info} from '../util/log'
+import {getKeyLength, getSeedLength, getMillerRabinCheckTimes, getStep} from '../config/rsa'
+
 const BigInteger = require('jsbn').BigInteger
+
 /*JS的最大计算精度为9007199254740991，超过之后所有大数计算将无效*/
 /**
- * RSA密钥对
+ * RSA密钥管理对象
  */
-
-/**
- * 生成种子的最大长度
- * @type {*|number}
- * @private
- */
-const Config_SeedLen = new BigInteger('2').pow(new BigInteger('128')),
-    /**
-     * 密钥或加密数据的最大长度，n的边界
-     * @type {*|number}
-     */
-    Config_KeyLen = new BigInteger('2').pow(new BigInteger('256')),
-    /**
-     * millerRabin算法的检查次数
-     * @type {number}
-     */
-    Config_millerRabinCheckNum = 1500,
-    Config_Step = new BigInteger('1'); //算法的步进长度，
 function RsaKey() {
-    let sk = {k: false, n: false}, pk = {k: false, n: false};
+    let sk = {k: false, n: false}, //私钥
+        pk = {k: false, n: false},
+        timestamp;
 
     this.getSK = function () {
         return sk;
@@ -37,6 +24,12 @@ function RsaKey() {
     this.setPK = function (input) {
         pk = input;
     };
+    this.getTimestamp = function () {
+        return timestamp;
+    };
+    this.setTimestamp = function (input) {
+        timestamp = input;
+    }
 }
 
 /**
@@ -51,22 +44,24 @@ RsaKey.prototype.generate = function (seedP, seedQ, seedE) {
         n, //p*q
         fn,//(p-1)(q-1)
         e, //PK
-        d; //SK
+        d, //SK
+        keyLen = getKeyLength();
 
     p = genPrime(seedP, 'P');
     q = genPrime(seedQ, 'Q');
 
-    n = p.multiply(q).mod(Config_KeyLen);
+    n = p.multiply(q).mod(keyLen);
     info('n: ', n.toString(), '. length: ', n.bitLength());
-    fn = p.subtract(BigInteger.ONE).multiply(q.subtract(BigInteger.ONE)).mod(Config_KeyLen);
+    fn = p.subtract(BigInteger.ONE).multiply(q.subtract(BigInteger.ONE)).mod(keyLen);
     info('f(n): ', n.toString(), '. length: ', fn.bitLength());
     e = genRelativelyPrime(fn, seedE);
 
     d = extEuclidean(e, fn);
     console.log("D :", d.toString());
 
-    this.setSK({e,n})
-    this.setPK({d,n})
+    this.setSK({e, n});
+    this.setPK({d, n});
+    this.setTimestamp(new Date().getTime());
 };
 
 /**
@@ -76,6 +71,7 @@ RsaKey.prototype.generate = function (seedP, seedQ, seedE) {
  */
 function extEuclidean(e, fn) {
     let x, y, iterCount = 0;
+
     function ex_gcd(a, b) {
         if (b.intValue() === 0) {
             x = new BigInteger("1");
@@ -89,6 +85,7 @@ function extEuclidean(e, fn) {
         iterCount++;
         return ans;
     }
+
     const gcd = ex_gcd(e, fn);
     if (BigInteger.ONE.mod(gcd).intValue() !== 0) {
         return new BigInteger("-1");
@@ -108,13 +105,23 @@ function extEuclidean(e, fn) {
  * @returns {*}
  */
 function genPrime(seed, name) {
-    let result, add = new BigInteger(seed).mod(Config_SeedLen), sub = add.clone(), checkCount = 0;
+    let result, add = new BigInteger(seed).mod(getSeedLength()), sub = add.clone(), checkCount = 0, seedLength = add.bitLength();
+
+    const step = getStep();
     while (!(result = checkPrime(add)) || !(result = checkPrime(sub))) {
-        add = add.add(Config_Step)
-        sub = sub.subtract(Config_Step)
+        add = add.add(step);
+        0 === add.compareTo(getKeyLength()) && (add = new BigInteger('3'));
+        sub = sub.subtract(step);
+        0 === sub.compareTo(BigInteger.ONE) && (sub = getKeyLength().clone());
         checkCount++;
     }
-    info('Generate prime ', name ? name : '', ':', result.toString(), '. Iteration Count:', checkCount);
+    info('========Generate Prime ' + name + '========')
+    info('value:', result.toString());
+    info('Iteration times:', checkCount);
+    info('Length:', result.bitLength());
+    info('Seed:', seed);
+    info('Seed length:', seedLength);
+    info('========Generate Prime End========')
     return result;
 }
 
@@ -124,7 +131,7 @@ function genPrime(seed, name) {
  * @returns {BigInteger|boolean}
  */
 function checkPrime(prime) {
-    if (prime.isProbablePrime(Config_millerRabinCheckNum)) {
+    if (prime.isProbablePrime(getMillerRabinCheckTimes())) {
         return prime;
     } else {
         return false;
@@ -138,11 +145,12 @@ function checkPrime(prime) {
  * @returns {*}
  */
 function genRelativelyPrime(fn, seed) {
-    let result, add = new BigInteger(seed).mod(Config_SeedLen), sub = add.clone(), checkCount = 0;
+    let result, add = new BigInteger(seed).mod(getSeedLength()), sub = add.clone(), checkCount = 0;
+    const step = getStep();
 
     while (!(result = checkRelativelyPrime(fn, add)) || !(result = checkRelativelyPrime(fn, sub))) {
-        add = add.add(Config_Step)
-        sub = sub.subtract(Config_Step)
+        add = add.add(step)
+        sub = sub.subtract(step)
         checkCount++;
     }
     info('Generate E(gcd) with ', fn.toString(), ': ', result.toString(), '. Iteration Count:', checkCount);
